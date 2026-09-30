@@ -1,16 +1,9 @@
 import os
-import sys
-from pathlib import Path
+# pyrefly: ignore [missing-import]
+import django
 from datetime import date, timedelta
 
-# Ensure backend directory is in sys.path when running outside backend/
-BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
-if BASE_DIR.exists() and str(BASE_DIR) not in sys.path:
-    sys.path.insert(0, str(BASE_DIR))
-
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "evaluation_core.settings")
-
-import django
 django.setup()
 
 from django.utils import timezone
