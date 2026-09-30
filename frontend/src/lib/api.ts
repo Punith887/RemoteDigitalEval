@@ -32,7 +32,12 @@ export async function csrfFetch(input: RequestInfo | URL, init: RequestInit = {}
     headers.set("X-CSRFToken", tokenBody.csrf_token);
     const normalized = new URL(url, window.location.origin).pathname;
     if ((normalized.endsWith("/submit") || normalized.endsWith("/finalize") || normalized.endsWith("/lock")) && !headers.has("Idempotency-Key")) {
-      headers.set("Idempotency-Key", crypto.randomUUID());
+      const uuid = (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+        ? crypto.randomUUID()
+        : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c: any) =>
+            (c ^ (Math.random() * 16 >> (c / 4))).toString(16)
+          );
+      headers.set("Idempotency-Key", uuid);
     }
   }
   const response = await fetchWithTimeout(input, { ...init, headers, credentials: init.credentials || "same-origin" });

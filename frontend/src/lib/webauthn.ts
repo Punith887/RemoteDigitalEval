@@ -15,7 +15,11 @@ export function deviceContext() {
   const key = "admiezo-device-id";
   let deviceId = window.localStorage.getItem(key);
   if (!deviceId) {
-    deviceId = window.crypto.randomUUID();
+    deviceId = (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function")
+      ? window.crypto.randomUUID()
+      : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c: any) =>
+          (c ^ (Math.random() * 16 >> (c / 4))).toString(16)
+        );
     window.localStorage.setItem(key, deviceId);
   }
   return {
