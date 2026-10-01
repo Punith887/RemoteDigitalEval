@@ -541,37 +541,63 @@ Local defaults are intentionally rejected when `DJANGO_DEBUG=false`. Before a sh
 
 The storage gateway provides local encrypted redundancy for development. On the server, mount primary, replica, and backup paths on independent durable volumes or replace the gateway implementation with object storage while preserving its signed URL contract.
 
-## Automated Zero-Lag CI/CD & Push-to-Main Pipeline
+## Automated GitHub Webhook Continuous Deployment Pipeline
 
-Whenever anyone pushes changes to the `main` branch, the automated GitHub Actions pipeline triggers instantly with **zero loading lag**:
+Whenever any developer commits or pushes changes to the `main` branch, GitHub sends an instant Webhook to the central laptop, triggering autonomous live deployment:
 
-- **Workflow File**: [`.github/workflows/main-push.yml`](file:///.github/workflows/main-push.yml)
-- **Zero Queue Lag (`cancel-in-progress: true`)**: If multiple developers push simultaneously or in quick succession, older in-progress runs are immediately superseded, eliminating queue backlogs.
-- **Smart Delta Updates (`scripts/deploy_live.ps1`)**:
-  - **Docs / Markdown / Scripts only**: Git fast-sync finishes in **~1 second** without restarting any containers or causing any user disruption.
-  - **Frontend only**: Rebuilds only the Next.js container using cached layers; backend APIs and databases remain online uninterrupted.
-  - **Backend / Workers only**: Rebuilds only backend containers with BuildKit layer caching; active user web sessions stay live without 502 errors.
-  - **Database migrations**: Applied automatically only when migrations are modified (`python manage.py migrate --noinput`).
-- **Parallel Cloud Verification**: Docker compose validation, Python compile sanity checks, and Next.js cached builds run concurrently on GitHub-hosted runners.
-
-### Starting Continuous Live Auto-Deploy
-
-#### Option 1: GitHub Actions Self-Hosted Runner (Recommended)
-Register and start the runner on the live server/workstation in one command:
-```powershell
-.\scripts\setup_runner.ps1 -RunnerToken <YOUR_GITHUB_RUNNER_TOKEN>
-```
-To run permanently in the background as a Windows Service:
-```powershell
-cd C:\actions-runner
-.\svc.cmd install
-.\svc.cmd start
+```text
+Developer commits/pushes
+        ↓
+GitHub main changes
+        ↓
+GitHub Webhook (HTTP POST)
+        ↓
+Python script on central laptop (github_webhook_deployer.py)
+        ↓
+Fetch latest main (git fetch origin main && git reset --hard origin/main)
+        ↓
+Docker build (BuildKit cached / smart delta build)
+        ↓
+Docker container restart (docker compose up -d)
+        ↓
+🎉 New code LIVE! (Verified at http://localhost:3000)
 ```
 
-#### Option 2: Autonomous Background Watcher (Zero Setup)
-For local environments without a GitHub runner token, run the autonomous watcher:
-```powershell
-.\scripts\auto_watch_deploy.ps1
+### 1. Start Webhook Server on Central Laptop
+
+Double-click or run:
+```cmd
+.\scripts\run_webhook.cmd
 ```
-The watcher polls `origin/main` every 5 seconds and instantly triggers delta updates whenever new commits land on `main`.
+or via PowerShell:
+```powershell
+.\scripts\run_webhook.ps1 -Port 9090
+```
+
+- **Interactive Dashboard**: Open [http://localhost:9090](http://localhost:9090) to view real-time pipeline status, commit history, container metrics, and live streaming deployment logs.
+- **Webhook Endpoint**: `http://localhost:9090/webhook`
+
+### 2. Connect GitHub Webhook
+
+To allow GitHub to deliver webhooks to your central laptop:
+
+1. **Get a Webhook URL** (e.g. using GitHub's official Smee.io or Cloudflare Tunnel):
+   ```powershell
+   .\scripts\setup_tunnel.ps1 -Mode smee
+   ```
+2. In your GitHub repository:
+   - Navigate to **Settings** &rarr; **Webhooks** &rarr; **Add webhook**.
+   - **Payload URL**: `https://smee.io/<your-channel-id>` (or your Cloudflare/ngrok HTTPS URL).
+   - **Content type**: `application/json`.
+   - **Which events would you like to trigger this webhook?**: `Just the push event`.
+   - **Active**: Checked ✅.
+   - Click **Add webhook**.
+
+### 3. Test Pipeline Locally
+
+To test the deployment pipeline immediately without waiting for a real push to GitHub:
+```powershell
+python .\scripts\test_webhook.py --event push --author "Developer" --message "Testing live deployment"
+```
+
 

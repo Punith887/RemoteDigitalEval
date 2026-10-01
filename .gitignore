@@ -15,3 +15,5 @@ frontend/test-results/
 backend/staticfiles/
 media/
 var/
+artifacts/*.log
+*.log
