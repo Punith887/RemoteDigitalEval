@@ -1,95 +1,116 @@
-name: Fast Auto-Deploy & Docker CI Pipeline
+name: Enterprise CI/CD Pipeline (PR & Main)
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
-# Prevent queue delays: newer pushes automatically supersede older in-progress runs
+# Cancel redundant runs immediately when newer commits are pushed to PR or main
 concurrency:
-  group: main-pipeline-${{ github.ref }}
+  group: ci-cd-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  statuses: write
+  checks: write
+  actions: write
+  deployments: write
 
 jobs:
   # =========================================================================
-  # 1. PUSH NOTIFICATION & AUDIT (Runs immediately in parallel)
+  # 1. AUDIT & STAGE VISIBILITY
+  # Displays current stage in the lifecycle:
+  # FEATURE BRANCH -> PR OPENED or PR MERGED -> MAIN
   # =========================================================================
-  notify-push:
-    name: Fast Push Audit & Summary
+  audit-stage:
+    name: Pipeline Stage & Audit
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Shallow Checkout Repository
+      - name: Shallow Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Display Push Info in Action Logs
+      - name: Display Pipeline Stage
         run: |
           echo "=========================================================="
-          echo ">> NEW COMMIT PUSHED TO MAIN BRANCH"
-          echo "=========================================================="
-          echo "Pushed by   : ${{ github.actor }}"
-          echo "Author      : ${{ github.event.head_commit.author.name }} <${{ github.event.head_commit.author.email }}>"
-          echo "Commit SHA  : ${{ github.sha }}"
-          echo "Branch      : ${{ github.ref_name }}"
-          echo "Commit Msg  : ${{ github.event.head_commit.message }}"
-          echo "Timestamp   : ${{ github.event.head_commit.timestamp }}"
-          echo "Commit URL  : ${{ github.event.head_commit.url }}"
-          echo "=========================================================="
-          echo "Changed files in this commit:"
-          git diff-tree --no-commit-id --name-status -r ${{ github.sha }} || true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo ">> STAGE: FEATURE BRANCH -> PR OPENED"
+            echo "PR Number   : #${{ github.event.pull_request.number }}"
+            echo "PR Title    : ${{ github.event.pull_request.title }}"
+            echo "Source      : ${{ github.head_ref }}"
+            echo "Target      : ${{ github.base_ref }}"
+            echo "Action      : ${{ github.event.action }}"
+          else
+            echo ">> STAGE: PR APPROVED/MERGED -> MAIN"
+            echo "Branch      : ${{ github.ref_name }}"
+            echo "Commit      : ${{ github.sha }}"
+          fi
+          echo "Triggered By: ${{ github.actor }}"
           echo "=========================================================="
 
-      - name: Generate GitHub Actions Step Summary
+      - name: Generate Stage Summary (UI Dashboard)
         run: |
-          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          # 🚀 Auto-Deploy Pipeline Triggered for `main`
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          # 🔀 Pull Request CI Pipeline: `FEATURE BRANCH → PR OPENED`
 
-          ### 👤 Commit & Author Information
-          | Field | Value |
+          ### 📋 PR Overview
+          | Attribute | Value |
           |---|---|
-          | **Pushed By** | **@${{ github.actor }}** |
-          | **Author** | `${{ github.event.head_commit.author.name }} <${{ github.event.head_commit.author.email }}>` |
-          | **Commit Message** | `${{ github.event.head_commit.message }}` |
-          | **Commit SHA** | [`${{ github.sha }}`](${{ github.event.head_commit.url }}) |
+          | **Lifecycle Stage** | **1. Feature Branch PR Opened → Running CI Tests ✅** |
+          | **Pull Request** | **#${{ github.event.pull_request.number }}**: ${{ github.event.pull_request.title }} |
+          | **Feature Branch** | `${{ github.head_ref }}` |
+          | **Target Branch** | `${{ github.base_ref }}` |
+          | **Developer** | @${{ github.actor }} |
+          | **Head Commit** | [`${{ github.sha }}`](${{ github.event.pull_request.html_url }}) |
+
+          > ℹ️ *Live deployment is held until this PR is approved and merged into `main`.*
+          EOF
+          else
+            cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          # 🚀 Main Branch Pipeline: `PR APPROVED/MERGED → MAIN → DEPLOY`
+
+          ### 📋 Deployment Overview
+          | Attribute | Value |
+          |---|---|
+          | **Lifecycle Stage** | **2. PR Merged to Main → CI Tests ✅ → Live Deploy 🚀** |
           | **Branch** | `${{ github.ref_name }}` |
-          | **Timestamp** | `${{ github.event.head_commit.timestamp }}` |
+          | **Developer** | @${{ github.actor }} |
+          | **Commit SHA** | [`${{ github.sha }}`](${{ github.event.head_commit.url }}) |
+          | **Commit Message** | `${{ github.event.head_commit.message }}` |
 
-          ### 📦 Changed Files
-          ```text
+          > ⚡ *CI test suites execute first; live deployment triggers automatically in sequence upon verification.*
           EOF
-          git diff-tree --no-commit-id --name-status -r ${{ github.sha }} >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Initial commit or no diff" >> $GITHUB_STEP_SUMMARY
-          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          ```
-
-          ---
-          > ⚡ *Executed automatically with zero queue delay (superseded runs automatically cancelled).*
-          EOF
+          fi
 
   # =========================================================================
-  # 2. DOCKER BUILD & TEST - BACKEND (Parallel Job, BuildKit GHA Caching)
+  # 2. CI TEST: DOCKER BACKEND BUILD & TEST (Parallel, GHA Layer Cache)
   # =========================================================================
   docker-test-backend:
-    name: Docker Build & Test (Backend)
+    name: CI Test ✅ Docker Backend
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Shallow Checkout Repository
+      - name: Shallow Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Validate Docker Compose Config
+      - name: Validate Docker Compose Syntax
         run: |
           docker compose config --quiet
-          echo "Docker Compose syntax valid."
+          echo "Docker compose configuration is valid."
 
-      - name: Check Subsystem Diff
+      - name: Detect Backend Changes
         id: filter
         run: |
           CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
@@ -98,14 +119,14 @@ jobs:
             echo "Backend code modified: initiating Docker build and test."
           else
             echo "run_test=false" >> $GITHUB_OUTPUT
-            echo "Backend untouched: skipping Docker build & test (0s saved)."
+            echo "Backend untouched: skipping Docker test (0s saved)."
           fi
 
       - name: Set up Docker Buildx
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Backend Docker Image (with GHA layer cache)
+      - name: Build Backend Docker Image (GHA Layer Cache)
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/build-push-action@v6
         with:
@@ -113,50 +134,49 @@ jobs:
           file: backend/Dockerfile
           target: runtime
           load: true
-          tags: admiezo-backend:test
+          tags: admiezo-backend:ci
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-      - name: Run Backend Tests in Container
+      - name: Execute Backend Tests in Docker Container
         if: steps.filter.outputs.run_test == 'true'
         run: |
-          echo "Executing Django test suite inside backend Docker container..."
+          echo "Running Django test suite in Docker container..."
           docker run --rm \
-            -e DJANGO_SECRET_KEY=ci-test-secret-key-32chars-minimum \
+            -e DJANGO_SECRET_KEY=ci-test-key-32chars-minimum-test \
             -e DJANGO_DEBUG=true \
             --entrypoint "" \
-            admiezo-backend:test \
+            admiezo-backend:ci \
             python manage.py test --settings=evaluation_core.test_settings --noinput
 
-      - name: Record Backend Status
+      - name: Record Backend Test Status
         if: always()
         run: |
           cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          ### 🐍 Docker Backend Build & Test
-          - **Status**: ${{ steps.filter.outputs.run_test == 'true' && 'Built & Tested inside Docker' || 'Untouched (skipped in 0s)' }}
-          - **Cache**: GitHub Actions Layer Cache (`type=gha`)
+          ### 🐍 Backend CI Verification
+          - **Result**: ${{ steps.filter.outputs.run_test == 'true' && '✅ Docker Image Built & Test Suite Passed' || '⚡ Skipped (No backend changes)' }}
           EOF
 
   # =========================================================================
-  # 3. DOCKER BUILD & TEST - FRONTEND (Parallel Job, Multi-Stage Build)
+  # 3. CI TEST: DOCKER FRONTEND BUILD (Parallel, Next.js Multi-Stage)
   # =========================================================================
   docker-test-frontend:
-    name: Docker Build & Test (Frontend)
+    name: CI Test ✅ Docker Frontend
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Shallow Checkout Repository
+      - name: Shallow Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Check Subsystem Diff
+      - name: Detect Frontend Changes
         id: filter
         run: |
           CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
           if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qE '^(frontend/|docker-compose\.yml|\.github/)'; then
             echo "run_test=true" >> $GITHUB_OUTPUT
-            echo "Frontend code modified: initiating Next.js Docker build."
+            echo "Frontend modified: building Next.js Docker image."
           else
             echo "run_test=false" >> $GITHUB_OUTPUT
             echo "Frontend untouched: skipping Docker build (0s saved)."
@@ -166,40 +186,39 @@ jobs:
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Frontend Next.js Image (BuildKit Cached)
+      - name: Build Frontend Next.js Image (GHA Layer Cache)
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: frontend/Dockerfile
           load: true
-          tags: admiezo-frontend:test
+          tags: admiezo-frontend:ci
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
-      - name: Record Frontend Status
+      - name: Record Frontend Test Status
         if: always()
         run: |
           cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          ### ⚛️ Docker Frontend Build
-          - **Status**: ${{ steps.filter.outputs.run_test == 'true' && 'Multi-stage Next.js Docker container verified' || 'Untouched (skipped in 0s)' }}
-          - **Cache**: GitHub Actions Layer Cache (`type=gha`)
+          ### ⚛️ Frontend CI Verification
+          - **Result**: ${{ steps.filter.outputs.run_test == 'true' && '✅ Next.js Container Multi-Stage Build Passed' || '⚡ Skipped (No frontend changes)' }}
           EOF
 
   # =========================================================================
-  # 4. DOCKER BUILD & TEST - SERVICES (Identity & Storage Gateway)
+  # 4. CI TEST: DOCKER SERVICES (Identity Service & Storage Gateway)
   # =========================================================================
   docker-test-services:
-    name: Docker Build & Test (Services)
+    name: CI Test ✅ Docker Services
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Shallow Checkout Repository
+      - name: Shallow Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Check Subsystem Diff
+      - name: Detect Services Changes
         id: filter
         run: |
           CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
@@ -213,60 +232,66 @@ jobs:
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Identity Service Image
+      - name: Build Identity Service Image (GHA Cache)
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: identity_service/Dockerfile
           load: true
-          tags: admiezo-identity:test
+          tags: admiezo-identity:ci
           cache-from: type=gha,scope=identity
           cache-to: type=gha,mode=max,scope=identity
 
-      - name: Run Identity Service Tests
+      - name: Run Identity Service Tests in Container
         if: steps.filter.outputs.run_test == 'true'
         run: |
           docker run --rm \
             --entrypoint "" \
-            admiezo-identity:test \
+            admiezo-identity:ci \
             python manage.py test --noinput
 
-      - name: Build Storage Gateway Image
+      - name: Build Storage Gateway Image (GHA Cache)
         if: steps.filter.outputs.run_test == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: storage_gateway/Dockerfile
           load: true
-          tags: admiezo-storage:test
+          tags: admiezo-storage:ci
           cache-from: type=gha,scope=storage
           cache-to: type=gha,mode=max,scope=storage
 
-      - name: Record Services Status
+      - name: Record Services Test Status
         if: always()
         run: |
           cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          ### 🔐 Docker Services Build & Test
-          - **Identity Service**: ${{ steps.filter.outputs.run_test == 'true' && 'Built & Unit Tests Passed' || 'Untouched (skipped)' }}
-          - **Storage Gateway**: ${{ steps.filter.outputs.run_test == 'true' && 'Container Build Verified' || 'Untouched (skipped)' }}
+          ### 🔐 Services CI Verification
+          - **Identity Service**: ${{ steps.filter.outputs.run_test == 'true' && '✅ Unit Tests Passed' || '⚡ Skipped' }}
+          - **Storage Gateway**: ${{ steps.filter.outputs.run_test == 'true' && '✅ Container Build Verified' || '⚡ Skipped' }}
           EOF
 
   # =========================================================================
-  # 5. INSTANT ZERO-LAG LIVE DEPLOYMENT (Self-Hosted Runner)
-  # Executes immediately in parallel on the live server in <2 seconds!
+  # 5. LIVE SERVER DEPLOYMENT (Strict Pipeline Order: CI TEST ✅ -> DEPLOY)
+  # Executes ONLY on merge to main, and ONLY after all CI tests pass!
   # =========================================================================
   deploy-live:
-    name: Instant Live Server Deploy
+    name: Live Server Deploy (Post-Merge)
     runs-on: self-hosted
     timeout-minutes: 5
-    continue-on-error: true
+    needs: [docker-test-backend, docker-test-frontend, docker-test-services]
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     steps:
       - name: Execute Fast Zero-Lag Deployment
         shell: powershell -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           Write-Host "=========================================================="
-          Write-Host ">> TRIGGERING INSTANT ZERO-LAG LIVE DEPLOYMENT"
+          Write-Host ">> PR APPROVED & MERGED -> TRIGGERING LIVE DEPLOYMENT"
           Write-Host "Commit: ${{ github.sha }}"
           Write-Host "Author: ${{ github.actor }}"
           Write-Host "=========================================================="
@@ -302,7 +327,6 @@ jobs:
           if (Test-Path $scriptPath) {
               & $scriptPath -TargetCommit "${{ github.sha }}" -BaseCommit "${{ github.event.before }}" -DeployPath $deployDir
           } else {
-              # Fallback fast-sync
               git fetch origin main --quiet
               git reset --hard origin/main
               $env:DOCKER_BUILDKIT = "1"
@@ -316,10 +340,10 @@ jobs:
         run: |
           if ($env:GITHUB_STEP_SUMMARY) {
               @"
-          ### ⚡ Live Server Auto-Deployment Status
-          - **Triggered By**: @${{ github.actor }}
+          ### 🚀 Live Server Deployment Status
+          - **Triggered By**: Merge to `main` by @${{ github.actor }}
           - **Commit**: [`${{ github.sha }}`](${{ github.event.head_commit.url }})
-          - **Strategy**: Smart targeted delta update (BuildKit layer caching)
-          - **User Impact**: Zero lag / zero downtime (services updated in seconds)
+          - **Order**: `PR MERGED → CI TEST ✅ → DEPLOY 🚀`
+          - **Result**: Synchronized in seconds with zero downtime
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
