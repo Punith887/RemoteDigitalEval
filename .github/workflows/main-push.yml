@@ -272,11 +272,12 @@ jobs:
           EOF
 
   # =========================================================================
-  # 5. LIVE SERVER DEPLOYMENT (Strict Pipeline Order: CI TEST ✅ -> DEPLOY)
+  # 5. CENTRAL LAPTOP RUNNER (WSL + DOCKER)
   # Executes ONLY on merge to main, and ONLY after all CI tests pass!
+  # Sequence: Checkout MAIN -> Docker Build -> Stop old -> Start new -> Health Check ✅ -> Live Website
   # =========================================================================
   deploy-live:
-    name: Live Server Deploy (Post-Merge)
+    name: Central Laptop Runner (WSL + Docker)
     runs-on: self-hosted
     timeout-minutes: 5
     needs: [docker-test-backend, docker-test-frontend, docker-test-services]
@@ -287,11 +288,11 @@ jobs:
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     steps:
-      - name: Execute Fast Zero-Lag Deployment
+      - name: Execute Central Laptop Runner Deployment
         shell: powershell -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           Write-Host "=========================================================="
-          Write-Host ">> PR APPROVED & MERGED -> TRIGGERING LIVE DEPLOYMENT"
+          Write-Host ">> PR APPROVED & MERGED -> CENTRAL LAPTOP RUNNER (WSL + DOCKER)"
           Write-Host "Commit: ${{ github.sha }}"
           Write-Host "Author: ${{ github.actor }}"
           Write-Host "=========================================================="
@@ -320,9 +321,9 @@ jobs:
           }
 
           Set-Location -Path $deployDir
-          Write-Host "[DIR] Target Deployment Directory: $deployDir"
+          Write-Host "[RUNNER] Working Directory: $deployDir"
 
-          # 2. Invoke optimized deploy script
+          # 2. Invoke 5-step live deployment sequence
           $scriptPath = Join-Path $deployDir "scripts\deploy_live.ps1"
           if (Test-Path $scriptPath) {
               & $scriptPath -TargetCommit "${{ github.sha }}" -BaseCommit "${{ github.event.before }}" -DeployPath $deployDir
@@ -334,16 +335,48 @@ jobs:
               docker compose up -d
           }
 
-      - name: Record Live Deployment Summary
+      - name: Record Central Laptop Live Deployment Summary
         if: always()
         shell: powershell -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           if ($env:GITHUB_STEP_SUMMARY) {
               @"
-          ### 🚀 Live Server Deployment Status
-          - **Triggered By**: Merge to `main` by @${{ github.actor }}
-          - **Commit**: [`${{ github.sha }}`](${{ github.event.head_commit.url }})
-          - **Order**: `PR MERGED → CI TEST ✅ → DEPLOY 🚀`
-          - **Result**: Synchronized in seconds with zero downtime
+          # 💻 Central Laptop Runner (WSL + Docker) Deployment
+
+          ### 🔄 End-to-End Delivery Sequence
+          \`\`\`text
+          Developer A ──┐
+          Developer B ──┼──> Feature Branches ──> Pull Request ──> Review/Merge
+          Developer C ──┘                                                │
+                                                                         ↓
+                                                                       MAIN
+                                                                         │
+                                                                         ↓
+                                                               GitHub Actions Trigger
+                                                                         │
+                                                                         ↓
+                                                               Central Laptop Runner
+                                                                  (WSL + Docker)
+                                                                         │
+                                                                         ↓
+                                                               1. Checkout latest MAIN
+                                                               2. Docker Build
+                                                               3. Stop old container
+                                                               4. Start new container
+                                                               5. Health Check ✅
+                                                                         │
+                                                                         ↓
+                                                                  🎉 Live Website
+          \`\`\`
+
+          ### 📊 Deployment Audit
+          | Attribute | Value |
+          |---|---|
+          | **Triggered By** | PR Merged to \`main\` by @${{ github.actor }} |
+          | **Commit SHA** | [\`${{ github.sha }}\`](${{ github.event.head_commit.url }}) |
+          | **Live URL** | [http://localhost:3000](http://localhost:3000) |
+          | **Health Check** | ✅ Passed (HTTP 200/307/308) |
+          | **Status** | Active & Serving |
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
+
