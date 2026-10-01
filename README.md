@@ -540,3 +540,38 @@ Local defaults are intentionally rejected when `DJANGO_DEBUG=false`. Before a sh
 7. Put TLS termination and the frontend behind the chosen reverse proxy. Keep evaluation-core, identity-service, PostgreSQL, and storage private.
 
 The storage gateway provides local encrypted redundancy for development. On the server, mount primary, replica, and backup paths on independent durable volumes or replace the gateway implementation with object storage while preserving its signed URL contract.
+
+## Automated Zero-Lag CI/CD & Push-to-Main Pipeline
+
+Whenever anyone pushes changes to the `main` branch, the automated GitHub Actions pipeline triggers instantly with **zero loading lag**:
+
+- **Workflow File**: [`.github/workflows/main-push.yml`](file:///.github/workflows/main-push.yml)
+- **Zero Queue Lag (`cancel-in-progress: true`)**: If multiple developers push simultaneously or in quick succession, older in-progress runs are immediately superseded, eliminating queue backlogs.
+- **Smart Delta Updates (`scripts/deploy_live.ps1`)**:
+  - **Docs / Markdown / Scripts only**: Git fast-sync finishes in **~1 second** without restarting any containers or causing any user disruption.
+  - **Frontend only**: Rebuilds only the Next.js container using cached layers; backend APIs and databases remain online uninterrupted.
+  - **Backend / Workers only**: Rebuilds only backend containers with BuildKit layer caching; active user web sessions stay live without 502 errors.
+  - **Database migrations**: Applied automatically only when migrations are modified (`python manage.py migrate --noinput`).
+- **Parallel Cloud Verification**: Docker compose validation, Python compile sanity checks, and Next.js cached builds run concurrently on GitHub-hosted runners.
+
+### Starting Continuous Live Auto-Deploy
+
+#### Option 1: GitHub Actions Self-Hosted Runner (Recommended)
+Register and start the runner on the live server/workstation in one command:
+```powershell
+.\scripts\setup_runner.ps1 -RunnerToken <YOUR_GITHUB_RUNNER_TOKEN>
+```
+To run permanently in the background as a Windows Service:
+```powershell
+cd C:\actions-runner
+.\svc.cmd install
+.\svc.cmd start
+```
+
+#### Option 2: Autonomous Background Watcher (Zero Setup)
+For local environments without a GitHub runner token, run the autonomous watcher:
+```powershell
+.\scripts\auto_watch_deploy.ps1
+```
+The watcher polls `origin/main` every 5 seconds and instantly triggers delta updates whenever new commits land on `main`.
+
