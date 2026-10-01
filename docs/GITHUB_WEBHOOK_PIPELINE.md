@@ -138,4 +138,3 @@ The server will verify every request against `X-Hub-Signature-256` and reject in
 | [`scripts/run_webhook.ps1`](file:///scripts/run_webhook.ps1) | PowerShell runner with configuration options |
 | [`scripts/setup_tunnel.ps1`](file:///scripts/setup_tunnel.ps1) | Tunnel / proxy helper (Smee.io / Cloudflare / ngrok) |
 | [`scripts/test_webhook.py`](file:///scripts/test_webhook.py) | Local webhook simulator & verification test tool |
-| [`scripts/deploy_live.ps1`](file:///scripts/deploy_live.ps1) | Supporting PowerShell deployment script |
