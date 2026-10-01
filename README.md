@@ -541,9 +541,9 @@ Local defaults are intentionally rejected when `DJANGO_DEBUG=false`. Before a sh
 
 The storage gateway provides local encrypted redundancy for development. On the server, mount primary, replica, and backup paths on independent durable volumes or replace the gateway implementation with object storage while preserving its signed URL contract.
 
-## GitHub Webhook Continuous Deployment Pipeline
+## Pure Python CI/CD Pipeline (Zero GitHub Actions)
 
-Whenever changes are pushed to `main` or a pull request is merged, GitHub sends a Webhook event to the central laptop to automatically deploy the latest changes:
+The repository features a 100% native Python CI/CD pipeline engine ([`scripts/cicd_pipeline.py`](file:///scripts/cicd_pipeline.py)) that replaces GitHub Actions entirely:
 
 ```text
 Developer
@@ -552,34 +552,59 @@ git push / PR merge
    ↓
 GitHub main
    ↓
-GitHub Webhook
+GitHub Webhook (HTTP POST) / Local Trigger / CLI Execution
    ↓
-Your Python program (scripts/github_webhook_deployer.py)
-   ↓
-git fetch main
-   ↓
-Docker build
-   ↓
-Docker run/restart
-   ↓
-Application updated
+Pure Python CI/CD Engine (scripts/cicd_pipeline.py)
+   │
+   ├─► [STAGE 1: CI - CONTINUOUS INTEGRATION]
+   │    1. Python Syntax & AST Integrity (all backend, identity, storage, scripts)
+   │    2. Config & Docker Compose Validation (.env.example, docker-compose.yml)
+   │    3. Security & Secret Leak Scanner (zero unmasked tokens or conflict markers)
+   │    4. Service Test Suites (Django apps, Identity Store, Storage Gateway)
+   │    5. Frontend Code & Dependencies Sanity Check
+   │    └──► QUALITY GATE: If ANY test fails -> Abort CD & alert developer!
+   │
+   └─► [STAGE 2: CD - CONTINUOUS DEPLOYMENT] (Only if CI passes 100%)
+        1. git fetch main (git fetch origin main && git reset --hard origin/main)
+        2. Smart Delta Analysis (identify changed services & migrations)
+        3. Docker BuildKit Rebuild (targeted delta build)
+        4. Docker Run & Container Restart (docker compose up -d)
+        5. Automated Database Migrations (manage.py migrate --noinput)
+        6. Live Health Verification (http://localhost:3000)
+        └──► Application Updated & LIVE!
 ```
 
-### 1. Start Webhook Server on Central Laptop
+### 1. Run Pipeline from Command Line
 
-Run via Windows command batch file:
+```powershell
+# Run CI test suite only (syntax, config, security, unit tests)
+python .\scripts\cicd_pipeline.py --ci
+
+# Run CD deployment only (git fetch, delta build, restart containers)
+python .\scripts\cicd_pipeline.py --cd
+
+# Run complete end-to-end CI -> CD pipeline
+python .\scripts\cicd_pipeline.py --full
+
+# Run in autonomous background polling watcher mode
+python .\scripts\cicd_pipeline.py --watch
+```
+
+### 2. Start Webhook & Web Dashboard Server
+
+Double-click or run:
 ```cmd
-.\scripts\run_webhook.cmd
+.\scripts\run_cicd.cmd
 ```
 or via PowerShell:
 ```powershell
-.\scripts\run_webhook.ps1 -Port 9090
+.\scripts\run_cicd.ps1 -Port 9090
 ```
 
 - **Interactive Web Dashboard**: [http://localhost:9090](http://localhost:9090)
 - **Webhook Endpoint**: `http://localhost:9090/webhook`
 
-### 2. Connect GitHub Webhook
+### 3. Connect GitHub Webhook
 
 1. Forward public webhooks to your local machine (e.g. using Smee.io or Cloudflare Tunnel):
    ```powershell
@@ -593,12 +618,13 @@ or via PowerShell:
    - **Active**: Checked ✅.
    - Click **Add webhook**.
 
-### 3. Test Pipeline Locally
+### 4. Test Pipeline Locally
 
 ```powershell
-# Test push event
+# Simulate push event
 python .\scripts\test_webhook.py --event push --author "Developer" --message "Testing live deployment"
 
-# Test PR merge event
+# Simulate PR merge event
 python .\scripts\test_webhook.py --event pull_request --author "Developer" --message "PR #42 Feature merged"
 ```
+

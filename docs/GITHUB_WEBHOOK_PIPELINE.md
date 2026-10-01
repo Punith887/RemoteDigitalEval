@@ -1,4 +1,5 @@
-# Central Laptop GitHub Webhook Continuous Deployment Pipeline
+# Pure Python Continuous Integration & Continuous Deployment (CI/CD) Pipeline
+*100% Native Python Execution • Zero GitHub Actions • Automated Webhooks & Live Deployment*
 
 ## 🎯 Architecture Overview
 
@@ -9,32 +10,43 @@ git push / PR merge
    ↓
 GitHub main
    ↓
-GitHub Webhook (HTTP POST payload)
+GitHub Webhook (HTTP POST) / Local Trigger / CLI Execution
    ↓
-Your Python program (scripts/github_webhook_deployer.py)
-   ↓
-git fetch main (git fetch origin main && git reset --hard origin/main)
-   ↓
-Docker build (BuildKit cached / smart delta build)
-   ↓
-Docker run/restart (docker compose up -d)
-   ↓
-Application updated (Verified LIVE at http://localhost:3000)
+Pure Python CI/CD Engine (scripts/cicd_pipeline.py)
+   │
+   ├─► [STAGE 1: CI - CONTINUOUS INTEGRATION]
+   │    1. Python Syntax & AST Integrity (all backend, identity, storage, scripts)
+   │    2. Config & Docker Compose Validation (.env.example, docker-compose.yml)
+   │    3. Security & Secret Leak Scanner (zero unmasked tokens or conflict markers)
+   │    4. Service Test Suites (Django apps, Identity Store, Storage Gateway)
+   │    5. Frontend Code & Dependencies Sanity Check
+   │    └──► QUALITY GATE: If ANY test fails -> Abort CD & alert developer!
+   │
+   └─► [STAGE 2: CD - CONTINUOUS DEPLOYMENT] (Only if CI passes 100%)
+        1. git fetch main (git fetch origin main && git reset --hard origin/main)
+        2. Smart Delta Analysis (identify changed services & migrations)
+        3. Docker BuildKit Rebuild (targeted delta build)
+        4. Docker Run & Container Restart (docker compose up -d)
+        5. Automated Database Migrations (manage.py migrate --noinput)
+        6. Live Health Verification (http://localhost:3000)
+        └──► Application Updated & LIVE!
 ```
 
 ---
 
 ## ⚡ Key Highlights
 
-1. **Direct Event-Driven (No Polling, No Idle Waste)**: Runs instantly when a commit lands on `main`.
-2. **Instant Response to GitHub (<100ms)**: Responds with `HTTP 202 Accepted` immediately so GitHub never experiences webhook timeouts.
-3. **Queue & Concurrency Protected**: Incoming commits are processed sequentially in a background worker thread. Overlapping pushes are safely handled without race conditions.
-4. **Smart Delta Rebuilding**: Inspects `git diff` between previous and new HEAD.
-   - Docs/Markdown/Scripts only: Git fast-sync without rebuilding containers.
-   - Targeted container rebuilds: Backend, frontend, identity, or storage rebuild only what changed.
-   - Database migrations: Automatically applies `python manage.py migrate --noinput` when migrations are detected.
-5. **Interactive Web Dashboard**: Accessible at `http://localhost:9090` with real-time pipeline status, commit metadata, container metrics, and live log streaming.
-6. **Zero Dependencies**: Uses Python standard library only. Runs on Python 3.8+ out of the box.
+1. **Zero GitHub Actions Dependencies**: 100% Python native execution. No GitHub Actions minutes consumed, no cloud runner timeouts, no external workflow limits.
+2. **Built-in Continuous Integration (CI)**: Runs static code analysis, AST syntax verification, configuration integrity tests, security leak scans, and service tests automatically before any code is allowed to deploy.
+3. **Automated Quality Gate**: If any test fails, CD deployment is immediately aborted to prevent broken builds from reaching production.
+4. **Smart Delta Rebuilding (CD)**: Rebuilds only what actually changed using Docker BuildKit layer caching.
+5. **Interactive Web Dashboard**: Accessible at `http://localhost:9090` with real-time CI test cards, CD stage status, live log streaming, and manual trigger controls.
+6. **Multi-Mode Execution**:
+   - `python scripts/cicd_pipeline.py --ci`: Run CI tests in console.
+   - `python scripts/cicd_pipeline.py --cd`: Run CD deployment in console.
+   - `python scripts/cicd_pipeline.py --full`: Run complete CI -> CD pipeline.
+   - `python scripts/cicd_pipeline.py --server`: Launch Webhook receiver & Dashboard.
+   - `python scripts/cicd_pipeline.py --watch`: Autonomous polling watcher mode.
 
 ---
 
