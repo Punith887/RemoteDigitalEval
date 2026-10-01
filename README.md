@@ -541,3 +541,64 @@ Local defaults are intentionally rejected when `DJANGO_DEBUG=false`. Before a sh
 
 The storage gateway provides local encrypted redundancy for development. On the server, mount primary, replica, and backup paths on independent durable volumes or replace the gateway implementation with object storage while preserving its signed URL contract.
 
+## GitHub Webhook Continuous Deployment Pipeline
+
+Whenever changes are pushed to `main` or a pull request is merged, GitHub sends a Webhook event to the central laptop to automatically deploy the latest changes:
+
+```text
+Developer
+   ↓
+git push / PR merge
+   ↓
+GitHub main
+   ↓
+GitHub Webhook
+   ↓
+Your Python program (scripts/github_webhook_deployer.py)
+   ↓
+git fetch main
+   ↓
+Docker build
+   ↓
+Docker run/restart
+   ↓
+Application updated
+```
+
+### 1. Start Webhook Server on Central Laptop
+
+Run via Windows command batch file:
+```cmd
+.\scripts\run_webhook.cmd
+```
+or via PowerShell:
+```powershell
+.\scripts\run_webhook.ps1 -Port 9090
+```
+
+- **Interactive Web Dashboard**: [http://localhost:9090](http://localhost:9090)
+- **Webhook Endpoint**: `http://localhost:9090/webhook`
+
+### 2. Connect GitHub Webhook
+
+1. Forward public webhooks to your local machine (e.g. using Smee.io or Cloudflare Tunnel):
+   ```powershell
+   .\scripts\setup_tunnel.ps1 -Mode smee
+   ```
+2. In your GitHub repository:
+   - Go to **Settings** &rarr; **Webhooks** &rarr; **Add webhook**.
+   - **Payload URL**: Your public webhook URL (e.g., `https://smee.io/<channel>` or tunnel URL).
+   - **Content type**: `application/json`.
+   - **Events**: Select `Push` (and optionally `Pull requests`).
+   - **Active**: Checked ✅.
+   - Click **Add webhook**.
+
+### 3. Test Pipeline Locally
+
+```powershell
+# Test push event
+python .\scripts\test_webhook.py --event push --author "Developer" --message "Testing live deployment"
+
+# Test PR merge event
+python .\scripts\test_webhook.py --event pull_request --author "Developer" --message "PR #42 Feature merged"
+```
