@@ -23,9 +23,15 @@ Set-Location -Path $RunnerDir
 
 # 2. Download and unpack runner if not already installed
 if (-not (Test-Path "$RunnerDir\config.cmd")) {
-    Write-Host "`n[2/4] Downloading GitHub Actions runner v2.322.0 (High-Speed)..." -ForegroundColor Yellow
+    Write-Host "`n[2/4] Downloading latest GitHub Actions runner (High-Speed)..." -ForegroundColor Yellow
+    $runnerVer = "2.337.0"
+    try {
+        $latest = (Invoke-RestMethod -Uri "https://api.github.com/repos/actions/runner/releases/latest" -TimeoutSec 3).tag_name
+        if ($latest) { $runnerVer = $latest.TrimStart('v') }
+    } catch {}
+    
     $runnerZip = "$RunnerDir\actions-runner-win-x64.zip"
-    $downloadUrl = "https://github.com/actions/runner/releases/download/v2.322.0/actions-runner-win-x64-2.322.0.zip"
+    $downloadUrl = "https://github.com/actions/runner/releases/download/v$runnerVer/actions-runner-win-x64-$runnerVer.zip"
     
     # Use native curl for maximum wire speed
     curl.exe -L -o $runnerZip $downloadUrl --silent --show-error
