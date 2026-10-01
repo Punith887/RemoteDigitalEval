@@ -312,7 +312,7 @@ function Login({ onSuccess, notice, loginRole, initialEmail }: { onSuccess: () =
           <button
             type="button"
             className="text-button"
-            style={{ color: "#8b5cf6", fontWeight: 700, fontSize: "12px", cursor: "pointer", background: "none", border: "none", padding: "4px 8px" }}
+            style={{ color: "#d97706", fontWeight: 700, fontSize: "12px", cursor: "pointer", background: "none", border: "none", padding: "4px 8px" }}
             onClick={() => { setIsSignUp(!isSignUp); setError(""); }}
           >
             {isSignUp ? "Sign in instead" : "Sign up"}
