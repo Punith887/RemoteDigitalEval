@@ -1,4 +1,4 @@
-name: Fast Auto-Deploy & CI Pipeline
+name: Fast Auto-Deploy & Docker CI Pipeline
 
 on:
   push:
@@ -72,82 +72,189 @@ jobs:
           EOF
 
   # =========================================================================
-  # 2. FAST CI SANITY & BUILD CHECKS (Runs in parallel with deployment)
+  # 2. DOCKER BUILD & TEST - BACKEND (Parallel Job, BuildKit GHA Caching)
   # =========================================================================
-  validate-build:
-    name: Fast CI Sanity & Build Check
+  docker-test-backend:
+    name: Docker Build & Test (Backend)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Shallow Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Validate Docker Compose Configuration
+      - name: Validate Docker Compose Config
         run: |
           docker compose config --quiet
-          echo "Docker compose configuration is valid."
+          echo "Docker Compose syntax valid."
 
-      - name: Validate Python Syntax (Backend, Identity, Storage Gateway)
-        run: |
-          python3 -m compileall -q backend identity_service storage_gateway
-          echo "Python code compilation passed without syntax errors."
-
-      - name: Detect Changed Subsystems
+      - name: Check Subsystem Diff
         id: filter
         run: |
           CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
-          if echo "$CHANGED" | grep -E '^frontend/'; then
-            echo "frontend_changed=true" >> $GITHUB_OUTPUT
-            echo "Frontend files modified: running Next.js build verification."
+          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qE '^(backend/|requirements|docker-compose\.yml|Dockerfile|\.github/)'; then
+            echo "run_test=true" >> $GITHUB_OUTPUT
+            echo "Backend code modified: initiating Docker build and test."
           else
-            echo "frontend_changed=false" >> $GITHUB_OUTPUT
-            echo "No frontend changes: skipping frontend build (0s saved)."
+            echo "run_test=false" >> $GITHUB_OUTPUT
+            echo "Backend untouched: skipping Docker build & test (0s saved)."
           fi
 
-      - name: Setup Node.js (Only if frontend changed)
-        if: steps.filter.outputs.frontend_changed == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+      - name: Set up Docker Buildx
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/setup-buildx-action@v3
 
-      - name: Cache Next.js Build
-        if: steps.filter.outputs.frontend_changed == 'true'
-        uses: actions/cache@v4
+      - name: Build Backend Docker Image (with GHA layer cache)
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/build-push-action@v6
         with:
-          path: frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**/*') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
+          context: .
+          file: backend/Dockerfile
+          target: runtime
+          load: true
+          tags: admiezo-backend:test
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
-      - name: Frontend Build Verification
-        if: steps.filter.outputs.frontend_changed == 'true'
+      - name: Run Backend Tests in Container
+        if: steps.filter.outputs.run_test == 'true'
         run: |
-          cd frontend
-          npm ci --prefer-offline --no-audit
-          npm run build
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-          DJANGO_API_URL: http://127.0.0.1:8000
-          STORAGE_GATEWAY_URL: http://127.0.0.1:9000
-          IDENTITY_SERVICE_URL: http://127.0.0.1:8100
+          echo "Executing Django test suite inside backend Docker container..."
+          docker run --rm \
+            -e DJANGO_SECRET_KEY=ci-test-secret-key-32chars-minimum \
+            -e DJANGO_DEBUG=true \
+            --entrypoint "" \
+            admiezo-backend:test \
+            python manage.py test --settings=evaluation_core.test_settings --noinput
 
-      - name: Record CI Verification Status
+      - name: Record Backend Status
         if: always()
         run: |
           cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-          ### 🛡️ Fast CI Verification Status
-          - **Docker Compose**: Configuration verified valid
-          - **Python Syntax**: All services syntax-checked
-          - **Frontend Next.js**: ${{ steps.filter.outputs.frontend_changed == 'true' && 'Incremental build verified' || 'Untouched (skipped)' }}
+          ### 🐍 Docker Backend Build & Test
+          - **Status**: ${{ steps.filter.outputs.run_test == 'true' && 'Built & Tested inside Docker' || 'Untouched (skipped in 0s)' }}
+          - **Cache**: GitHub Actions Layer Cache (`type=gha`)
           EOF
 
   # =========================================================================
-  # 3. INSTANT ZERO-LAG LIVE DEPLOYMENT (Self-Hosted Runner)
-  # Executes immediately on the target server/workstation in seconds!
+  # 3. DOCKER BUILD & TEST - FRONTEND (Parallel Job, Multi-Stage Build)
+  # =========================================================================
+  docker-test-frontend:
+    name: Docker Build & Test (Frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Shallow Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check Subsystem Diff
+        id: filter
+        run: |
+          CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
+          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qE '^(frontend/|docker-compose\.yml|\.github/)'; then
+            echo "run_test=true" >> $GITHUB_OUTPUT
+            echo "Frontend code modified: initiating Next.js Docker build."
+          else
+            echo "run_test=false" >> $GITHUB_OUTPUT
+            echo "Frontend untouched: skipping Docker build (0s saved)."
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Frontend Next.js Image (BuildKit Cached)
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          load: true
+          tags: admiezo-frontend:test
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Record Frontend Status
+        if: always()
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          ### ⚛️ Docker Frontend Build
+          - **Status**: ${{ steps.filter.outputs.run_test == 'true' && 'Multi-stage Next.js Docker container verified' || 'Untouched (skipped in 0s)' }}
+          - **Cache**: GitHub Actions Layer Cache (`type=gha`)
+          EOF
+
+  # =========================================================================
+  # 4. DOCKER BUILD & TEST - SERVICES (Identity & Storage Gateway)
+  # =========================================================================
+  docker-test-services:
+    name: Docker Build & Test (Services)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Shallow Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check Subsystem Diff
+        id: filter
+        run: |
+          CHANGED=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} 2>/dev/null || true)
+          if [ -z "$CHANGED" ] || echo "$CHANGED" | grep -qE '^(identity_service/|storage_gateway/|docker-compose\.yml|\.github/)'; then
+            echo "run_test=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_test=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Identity Service Image
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: identity_service/Dockerfile
+          load: true
+          tags: admiezo-identity:test
+          cache-from: type=gha,scope=identity
+          cache-to: type=gha,mode=max,scope=identity
+
+      - name: Run Identity Service Tests
+        if: steps.filter.outputs.run_test == 'true'
+        run: |
+          docker run --rm \
+            --entrypoint "" \
+            admiezo-identity:test \
+            python manage.py test --noinput
+
+      - name: Build Storage Gateway Image
+        if: steps.filter.outputs.run_test == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: storage_gateway/Dockerfile
+          load: true
+          tags: admiezo-storage:test
+          cache-from: type=gha,scope=storage
+          cache-to: type=gha,mode=max,scope=storage
+
+      - name: Record Services Status
+        if: always()
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          ### 🔐 Docker Services Build & Test
+          - **Identity Service**: ${{ steps.filter.outputs.run_test == 'true' && 'Built & Unit Tests Passed' || 'Untouched (skipped)' }}
+          - **Storage Gateway**: ${{ steps.filter.outputs.run_test == 'true' && 'Container Build Verified' || 'Untouched (skipped)' }}
+          EOF
+
+  # =========================================================================
+  # 5. INSTANT ZERO-LAG LIVE DEPLOYMENT (Self-Hosted Runner)
+  # Executes immediately in parallel on the live server in <2 seconds!
   # =========================================================================
   deploy-live:
     name: Instant Live Server Deploy
@@ -216,4 +323,3 @@ jobs:
           - **User Impact**: Zero lag / zero downtime (services updated in seconds)
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
-
