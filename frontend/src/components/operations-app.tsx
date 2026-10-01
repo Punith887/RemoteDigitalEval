@@ -204,6 +204,7 @@ function Login({ onSuccess, notice, loginRole, initialEmail }: { onSuccess: () =
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [mfaEnrollment, setMfaEnrollment] = useState<MfaEnrollment | null>(null);
   const [code, setCode] = useState("");
@@ -229,6 +230,11 @@ function Login({ onSuccess, notice, loginRole, initialEmail }: { onSuccess: () =
   }, []);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
+    if (isSignUp) {
+      setError("Institutional self-registration requires administrator authorization. Please sign in with your issued credentials or contact your university examination administrator.");
+      setBusy(false);
+      return;
+    }
     try {
       const response = await csrfFetch("/api/v1/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, ...deviceContext() }) });
       const body = await response.json().catch(() => ({}));
@@ -291,13 +297,28 @@ function Login({ onSuccess, notice, loginRole, initialEmail }: { onSuccess: () =
       <div className="login-foot">{domain?.hostname || "Secure institutional access"} · Session monitoring enabled</div>
     </section>
     <section className="login-form-wrap"><form className="login-form" onSubmit={mfaEnrollment ? enrollMfa : mfaRequired ? verifyMfa : submit}>
-      <h2>{mfaEnrollment ? "Set up authenticator" : mfaRequired ? "Verify it’s you" : evaluatorLogin ? "Evaluator sign in" : "Welcome back"}</h2><p>{mfaEnrollment ? "Scan this QR code with your authenticator app, then enter its six-digit code." : mfaRequired ? "Enter the six-digit code from your authenticator." : evaluatorLogin ? "Sign in again to return to your evaluation desk." : "Sign in to the evaluation control room."}</p>
+      <h2>{mfaEnrollment ? "Set up authenticator" : mfaRequired ? "Verify it’s you" : isSignUp ? "Create your account" : evaluatorLogin ? "Evaluator sign in" : "Welcome back"}</h2><p>{mfaEnrollment ? "Scan this QR code with your authenticator app, then enter its six-digit code." : mfaRequired ? "Enter the six-digit code from your authenticator." : isSignUp ? "Sign up to access your evaluation workspace." : evaluatorLogin ? "Sign in again to return to your evaluation desk." : "Sign in to the evaluation control room."}</p>
       {!mfaRequired && !mfaEnrollment && <><label className="field"><span>Email address</span><input type="email" autoComplete="username" value={email} onChange={(event) => { loginEdited.current = true; setEmail(event.target.value); }} required /></label>
         <label className="field"><span>Password</span><div style={{ position: "relative" }}><input type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => { loginEdited.current = true; setPassword(event.target.value); }} required style={{ paddingRight: "2.75rem" }} /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"} style={{ position: "absolute", right: "0.75rem", top: "50%", transform: "translateY(-50%)", border: "none", background: "transparent", padding: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label></>}
       {mfaRequired && <label className="field"><span>Authenticator code</span><input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} minLength={6} maxLength={6} required autoFocus /></label>}
       {mfaEnrollment && <div className="totp-setup login-totp-setup"><QRCodeSVG value={mfaEnrollment.provisioning_uri} size={164} level="M" /><div><span>Manual setup key</span><code>{mfaEnrollment.secret}</code><label className="field"><span>Six-digit code</span><input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} minLength={6} maxLength={6} required autoFocus /></label></div></div>}
       {(error || notice) && <div className="form-error" role="alert">{error || notice}</div>}
-      <button className="primary-button login-submit" disabled={busy}>{busy ? "Please wait…" : mfaEnrollment ? "Enable and continue" : mfaRequired ? "Verify and continue" : "Sign in"}<ArrowUpRight /></button>
+      <button className="primary-button login-submit signup-button" disabled={busy}>{busy ? "Please wait…" : mfaEnrollment ? "Enable and continue" : mfaRequired ? "Verify and continue" : isSignUp ? "Sign up" : "Sign in"}<ArrowUpRight /></button>
+      {!mfaRequired && !mfaEnrollment && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "14px", padding: "0 2px" }}>
+          <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+            {isSignUp ? "Already have an account?" : "Need an account?"}
+          </span>
+          <button
+            type="button"
+            className="text-button"
+            style={{ color: "#8b5cf6", fontWeight: 700, fontSize: "12px", cursor: "pointer", background: "none", border: "none", padding: "4px 8px" }}
+            onClick={() => { setIsSignUp(!isSignUp); setError(""); }}
+          >
+            {isSignUp ? "Sign in instead" : "Sign up"}
+          </button>
+        </div>
+      )}
       {!mfaRequired && !mfaEnrollment && <button className="secondary-button login-passkey" type="button" disabled={busy || !email} onClick={signInWithPasskey}><KeyRound />Use a passkey</button>}
       {!mfaRequired && !mfaEnrollment && ssoProviders.length > 0 && <><div className="form-divider">Institutional SSO</div>{ssoProviders.map((provider) => <button className="secondary-button login-passkey" type="button" disabled={busy} onClick={() => signInWithSso(provider)} key={provider.id}><ShieldCheck />Continue with {provider.name}</button>)}</>}
       {!mfaRequired && !mfaEnrollment && domain?.scope === "platform" && <div className="login-domain-note">University users must sign in from their university subdomain.</div>}
